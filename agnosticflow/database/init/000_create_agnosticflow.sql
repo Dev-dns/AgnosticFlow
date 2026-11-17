@@ -1,6 +1,7 @@
 
 -- Crear la base de datos de negocio de AgnosticFlow.
--- PostgreSQL ya crea POSTGRES_DB para n8n.
+-- POSTGRES_DB (n8n) la crea la imagen de PostgreSQL; esta va aparte
+-- para que las tablas internas de n8n no se mezclen con las de negocio.
 
 SELECT 'CREATE DATABASE agnosticflow'
 WHERE NOT EXISTS (
