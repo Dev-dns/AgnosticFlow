@@ -19,8 +19,8 @@
 --
 -- Este script se ejecuta solo en volúmenes nuevos. En una BBDD que ya
 -- existe, hay que lanzarlo a mano (rellena los clientes que ya existan):
---   docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
---       < database/init/002_numero_socio.sql
+--   docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+--       < database/init/003_numero_socio.sql
 
 \connect agnosticflow
 
