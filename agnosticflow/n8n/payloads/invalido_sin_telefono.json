@@ -1,0 +1,8 @@
+{
+  "tenant_id": "11111111-1111-4111-8111-111111111111",
+  "nombre_completo": "Marta Sánchez Gil",
+  "dni_nie": "87654321X",
+  "email": "marta.sanchez@example.com",
+  "servicio": "Inscripción anual",
+  "canal_preferido": "whatsapp"
+}
