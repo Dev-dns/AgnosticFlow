@@ -38,11 +38,13 @@ BEGIN
     -- Intentar insertar transacción con tenant inexistente
     BEGIN
         INSERT INTO transacciones (
-            tenant_id, cliente_id
+            tenant_id, cliente_id, servicio, canal_preferido
         )
         VALUES (
             '00000000-0000-4000-8000-000000000001',
-            cliente_valido
+            cliente_valido,
+            'Servicio de prueba',
+            'email'
         );
 
         RAISE EXCEPTION
@@ -165,11 +167,13 @@ BEGIN
     -- Intentar utilizar el cliente A desde el tenant B
     BEGIN
         INSERT INTO transacciones (
-            tenant_id, cliente_id
+            tenant_id, cliente_id, servicio, canal_preferido
         )
         VALUES (
             tenant_b,
-            cliente_a
+            cliente_a,
+            'Servicio de prueba',
+            'email'
         );
 
         RAISE EXCEPTION
@@ -213,12 +217,14 @@ BEGIN
     RETURNING id INTO cliente_id_test;
 
     INSERT INTO transacciones (
-        tenant_id, cliente_id, estado
+        tenant_id, cliente_id, estado, servicio, canal_preferido
     )
     VALUES (
         tenant_id_test,
         cliente_id_test,
-        'PENDIENTE'
+        'PENDIENTE',
+        'Servicio de prueba',
+        'email'
     )
     RETURNING id INTO transaccion_id_test;
 
