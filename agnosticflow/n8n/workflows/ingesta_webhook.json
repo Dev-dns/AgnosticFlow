@@ -7,15 +7,22 @@
       "id": "b8f0c1a2-4d3e-4f5a-9b6c-1d2e3f4a5b01",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2.2,
-      "position": [0, 0],
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
       "webhookId": "3f6c2a1e-8b7d-4c5e-9a0f-6e1a2b3c4d01",
+      "notes": "Versión 1 a propósito: es la única que, con Binary Data, entrega el cuerpo sin interpretarlo. Así un JSON mal formado llega al flujo (400 + log) en vez de cortarse con un 422 de n8n.",
       "parameters": {
         "httpMethod": "POST",
         "path": "ingesta",
         "authentication": "headerAuth",
         "responseMode": "responseNode",
-        "options": {}
+        "options": {
+          "binaryData": true,
+          "binaryPropertyName": "datos"
+        }
       },
       "credentials": {
         "httpHeaderAuth": {
@@ -25,16 +32,167 @@
       }
     },
     {
+      "id": "b8f0c1a2-4d3e-4f5a-9b6c-1d2e3f4a5b03",
+      "name": "Validar payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Valida y limpia el payload según el contrato (docs/payload.md, AGNOSTIC-11/13).\n// El Webhook entrega el cuerpo en bruto (binario \"datos\") para poder responder\n// 400 también a un JSON mal formado: si n8n lo interpretase, devolvería 422\n// antes de ejecutar el flujo y el rechazo no quedaría en logs.\nconst UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;\nconst TELEFONO = /^\\+?[0-9]{9,15}$/;\nconst EMAIL = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nconst CANALES = ['whatsapp', 'email'];\n\nconst item = $input.first();\nconst errores = [];\nconst error = (campo, mensaje) => errores.push({ campo, mensaje });\n\nlet cuerpo;\nif (!item.binary?.datos) {\n  error('body', 'El cuerpo está vacío');\n} else {\n  const bruto = (await this.helpers.getBinaryDataBuffer(0, 'datos'))\n    .toString('utf8')\n    .replace(/^﻿/, '');\n  try {\n    cuerpo = JSON.parse(bruto);\n  } catch {\n    error('body', 'El cuerpo no es un JSON válido');\n  }\n}\n\nconst datos = {};\nlet tenantId = null;\n\nif (cuerpo !== undefined) {\n  if (cuerpo === null || typeof cuerpo !== 'object' || Array.isArray(cuerpo)) {\n    error('body', 'El cuerpo debe ser un objeto JSON');\n  } else {\n    // Devuelve el texto sin espacios en los extremos, o null si no es válido.\n    const texto = (campo, max) => {\n      const valor = cuerpo[campo];\n      if (valor === undefined || valor === null) {\n        error(campo, 'Campo obligatorio');\n        return null;\n      }\n      if (typeof valor !== 'string') {\n        error(campo, 'Debe ser un texto');\n        return null;\n      }\n      const limpio = valor.trim();\n      if (limpio === '') {\n        error(campo, 'Campo obligatorio');\n        return null;\n      }\n      if (max && limpio.length > max) {\n        error(campo, `Máximo ${max} caracteres`);\n        return null;\n      }\n      return limpio;\n    };\n\n    const tenant = texto('tenant_id');\n    if (tenant !== null) {\n      if (UUID.test(tenant)) {\n        tenantId = tenant.toLowerCase();\n      } else {\n        error('tenant_id', 'Debe ser un UUID');\n      }\n    }\n\n    datos.nombre_completo = texto('nombre_completo', 150);\n\n    const dni = texto('dni_nie', 20);\n    datos.dni_nie = dni === null ? null : dni.toUpperCase();\n\n    const telefono = texto('telefono');\n    if (telefono !== null) {\n      const limpio = telefono.replace(/[\\s\\-()]/g, '');\n      if (TELEFONO.test(limpio)) {\n        datos.telefono = limpio;\n      } else {\n        error('telefono', 'Debe tener entre 9 y 15 dígitos, con + opcional al inicio');\n      }\n    }\n\n    const email = texto('email', 255);\n    if (email !== null) {\n      if (EMAIL.test(email)) {\n        datos.email = email.toLowerCase();\n      } else {\n        error('email', 'Formato no válido (usuario@dominio.tld)');\n      }\n    }\n\n    datos.servicio = texto('servicio', 150);\n\n    const canal = texto('canal_preferido');\n    if (canal !== null) {\n      if (CANALES.includes(canal.toLowerCase())) {\n        datos.canal_preferido = canal.toLowerCase();\n      } else {\n        error('canal_preferido', 'Debe ser \"whatsapp\" o \"email\"');\n      }\n    }\n\n    datos.tenant_id = tenantId;\n  }\n}\n\nreturn [{ json: { tenant_id: tenantId, datos, errores } }];\n"
+      }
+    },
+    {
+      "id": "b8f0c1a2-4d3e-4f5a-9b6c-1d2e3f4a5b04",
+      "name": "Comprobar tenant",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT EXISTS (\n    SELECT 1 FROM tenants WHERE id = $1::uuid AND activo\n) AS tenant_activo",
+        "options": {
+          "queryReplacement": "={{ [ $json.tenant_id ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "agnosticflowPg01",
+          "name": "Postgres AgnosticFlow"
+        }
+      }
+    },
+    {
+      "id": "b8f0c1a2-4d3e-4f5a-9b6c-1d2e3f4a5b05",
+      "name": "Resultado validación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Une los errores del payload con la comprobación del tenant, para\n// devolverlos todos a la vez en el 400.\nconst validacion = $('Validar payload').first().json;\nconst tenantActivo = $input.first().json.tenant_activo === true;\n\nconst errores = [...validacion.errores];\nif (validacion.tenant_id !== null && !tenantActivo) {\n  errores.push({ campo: 'tenant_id', mensaje: 'El tenant no existe o no está activo' });\n}\n\nreturn [{\n  json: {\n    valido: errores.length === 0,\n    errores,\n    datos: validacion.datos,\n    // Solo se guarda en logs un tenant que exista (FK de logs.tenant_id).\n    tenant_id: tenantActivo ? validacion.tenant_id : null,\n  },\n}];\n"
+      }
+    },
+    {
+      "id": "b8f0c1a2-4d3e-4f5a-9b6c-1d2e3f4a5b06",
+      "name": "¿Payload válido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1a2b3c4-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.valido }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
       "id": "b8f0c1a2-4d3e-4f5a-9b6c-1d2e3f4a5b02",
-      "name": "Respuesta provisional",
+      "name": "Responder 202",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.5,
-      "position": [260, 0],
+      "position": [
+        1100,
+        -120
+      ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { \"paso\": 4, \"recibido\": $json.body, \"tipo_body\": typeof $json.body, \"content_type\": $json.headers[\"content-type\"] } }}",
+        "responseBody": "={{ { \"estado\": \"ACEPTADO\", \"mensaje\": \"Solicitud recibida y en procesamiento\" } }}",
         "options": {
           "responseCode": 202
+        }
+      }
+    },
+    {
+      "id": "b8f0c1a2-4d3e-4f5a-9b6c-1d2e3f4a5b07",
+      "name": "Insertar ingesta",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        1320,
+        -120
+      ],
+      "notes": "Consulta copiada de n8n/sql/insertar_ingesta.sql (desplegar_workflow.sh comprueba que coinciden).",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- =====================================================\n-- AGNOSTICFLOW\n-- Entregable 3 (AGNOSTIC-14): INSERT de la ingesta por webhook\n-- =====================================================\n-- Consulta que ejecuta el nodo Postgres del workflow de ingesta.\n-- Parámetros (en este orden, nunca concatenados):\n--   $1 tenant_id   $2 nombre_completo   $3 dni_nie   $4 telefono\n--   $5 email       $6 servicio          $7 canal_preferido\n--\n-- Es una única sentencia, así que es atómica: se guarda todo o nada.\n--   1. Si el cliente ya existe (tenant_id + dni), se actualizan su teléfono\n--      y su email.\n--   2. Si no existe, se inserta. El trigger de la migración 003 le asigna\n--      el Número de Socio.\n--   3. Se crea una transacción PENDIENTE y un log INFO.\n--\n-- Por qué no se usa INSERT ... ON CONFLICT DO UPDATE: el trigger\n-- BEFORE INSERT del Número de Socio se ejecuta antes de que se detecte el\n-- conflicto, así que cada reenvío de un cliente existente gastaría un\n-- número y dejaría huecos en la numeración.\n--\n-- Si llegan a la vez dos altas nuevas con el mismo DNI, una de ellas falla\n-- por la restricción UNIQUE (tenant_id, dni). Al deshacerse, el contador\n-- vuelve atrás y no queda hueco. Los reintentos se tratan en el E8.\n\nWITH datos AS (\n    SELECT\n        $1::uuid AS tenant_id,\n        $2::text AS nombre,\n        $3::text AS dni,\n        $4::text AS telefono,\n        $5::text AS email,\n        $6::text AS servicio,\n        $7::text AS canal_preferido\n),\nactualizado AS (\n    UPDATE clientes c\n    SET telefono = d.telefono,\n        email = d.email\n    FROM datos d\n    WHERE c.tenant_id = d.tenant_id\n      AND c.dni = d.dni\n    RETURNING c.id, c.tenant_id, c.numero_socio\n),\ninsertado AS (\n    INSERT INTO clientes (tenant_id, nombre, dni, telefono, email)\n    SELECT tenant_id, nombre, dni, telefono, email\n    FROM datos\n    WHERE NOT EXISTS (SELECT 1 FROM actualizado)\n    RETURNING id, tenant_id, numero_socio\n),\ncliente AS (\n    SELECT id, tenant_id, numero_socio, TRUE AS existente FROM actualizado\n    UNION ALL\n    SELECT id, tenant_id, numero_socio, FALSE AS existente FROM insertado\n),\ntransaccion AS (\n    INSERT INTO transacciones (tenant_id, cliente_id, servicio, canal_preferido)\n    SELECT c.tenant_id, c.id, d.servicio, d.canal_preferido\n    FROM cliente c\n    CROSS JOIN datos d\n    RETURNING id, tenant_id, cliente_id, estado\n),\nlog AS (\n    INSERT INTO logs (tenant_id, transaccion_id, nivel, mensaje)\n    SELECT tenant_id, id, 'INFO', 'Recibido vía webhook'\n    FROM transaccion\n)\nSELECT\n    t.id AS transaccion_id,\n    t.cliente_id,\n    c.numero_socio,\n    c.existente AS cliente_existente,\n    t.estado\nFROM transaccion t\nJOIN cliente c ON c.id = t.cliente_id\n",
+        "options": {
+          "queryReplacement": "={{ [ $json.datos.tenant_id, $json.datos.nombre_completo, $json.datos.dni_nie, $json.datos.telefono, $json.datos.email, $json.datos.servicio, $json.datos.canal_preferido ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "agnosticflowPg01",
+          "name": "Postgres AgnosticFlow"
+        }
+      }
+    },
+    {
+      "id": "b8f0c1a2-4d3e-4f5a-9b6c-1d2e3f4a5b08",
+      "name": "Responder 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1100,
+        120
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"estado\": \"RECHAZADO\", \"errores\": $json.errores } }}",
+        "options": {
+          "responseCode": 400
+        }
+      }
+    },
+    {
+      "id": "b8f0c1a2-4d3e-4f5a-9b6c-1d2e3f4a5b09",
+      "name": "Registrar rechazo",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.8,
+      "position": [
+        1320,
+        120
+      ],
+      "notes": "Solo se guardan los motivos, no el payload, para no dejar datos personales en logs.",
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO logs (tenant_id, nivel, mensaje)\nVALUES ($1::uuid, 'WARN', $2)",
+        "options": {
+          "queryReplacement": "={{ [ $json.tenant_id, \"Rechazado vía webhook: \" + $json.errores.map(e => e.campo + \": \" + e.mensaje).join(\"; \") ] }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "agnosticflowPg01",
+          "name": "Postgres AgnosticFlow"
         }
       }
     }
@@ -43,7 +201,84 @@
     "Webhook": {
       "main": [
         [
-          { "node": "Respuesta provisional", "type": "main", "index": 0 }
+          {
+            "node": "Validar payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar payload": {
+      "main": [
+        [
+          {
+            "node": "Comprobar tenant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Comprobar tenant": {
+      "main": [
+        [
+          {
+            "node": "Resultado validación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resultado validación": {
+      "main": [
+        [
+          {
+            "node": "¿Payload válido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Payload válido?": {
+      "main": [
+        [
+          {
+            "node": "Responder 202",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder 400",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Responder 202": {
+      "main": [
+        [
+          {
+            "node": "Insertar ingesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Responder 400": {
+      "main": [
+        [
+          {
+            "node": "Registrar rechazo",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     }

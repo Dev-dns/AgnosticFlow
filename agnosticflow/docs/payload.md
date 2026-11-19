@@ -5,7 +5,8 @@ sea cual sea el sector del cliente (AGNOSTIC-11).
 
 - **Endpoint:** `POST /webhook/ingesta`
 - **Cabecera:** `Content-Type: application/json`
-- **Autenticación:** por cabecera (*Header Auth*). Pendiente de implementar en AGNOSTIC-12.
+- **Autenticación:** cabecera `X-AgnosticFlow-Token` con el valor de `INGESTA_WEBHOOK_TOKEN` (AGNOSTIC-12).
+  Sin token o con un token incorrecto, n8n responde `403` y no se ejecuta el flujo.
 
 ## Campos
 
@@ -55,7 +56,7 @@ El sistema genera además:
 | Caso | HTTP | Cuerpo |
 |---|---|---|
 | Payload válido | `202 Accepted` (en menos de 300 ms) | `{ "estado": "ACEPTADO", "mensaje": "Solicitud recibida y en procesamiento" }` |
-| Payload inválido o tenant inexistente | `400 Bad Request` | `{ "estado": "RECHAZADO", "errores": [ { "campo": "email", "mensaje": "..." } ] }` |
+| Payload inválido, JSON mal formado o tenant inexistente | `400 Bad Request` | `{ "estado": "RECHAZADO", "errores": [ { "campo": "email", "mensaje": "..." } ] }` |
 
 - Con el 202, los datos se guardan después de responder, sin que el cliente tenga que esperar.
 - Con el 400, se devuelven **todos** los errores a la vez y **no se inserta nada**
@@ -73,7 +74,11 @@ Están en `n8n/payloads/`:
 | `invalido_malformado.json` | JSON mal formado (falta la llave de cierre) | 400, sin INSERT |
 
 ```bash
-curl -i -X POST http://localhost:5678/webhook/ingesta \
+curl -i -X POST "http://localhost:${N8N_PORT:-5678}/webhook/ingesta" \
   -H 'Content-Type: application/json' \
+  -H "X-AgnosticFlow-Token: $INGESTA_WEBHOOK_TOKEN" \
   --data-binary @n8n/payloads/valido.json
 ```
+
+Las pruebas automáticas de extremo a extremo (P0–P4 de AGNOSTIC-16) están en
+`n8n/scripts/probar_webhook.sh`.
