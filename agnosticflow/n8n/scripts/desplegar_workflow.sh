@@ -39,6 +39,22 @@ if [ -z "$ID" ]; then
     exit 1
 fi
 
+# Consultas SQL que se versionan aparte: el nodo del workflow debe llevar
+# exactamente el contenido del fichero (nombre del nodo -> fichero).
+declare -A SQL_NODOS=(
+    ["Insertar ingesta"]="n8n/sql/insertar_ingesta.sql"
+)
+for NODO in "${!SQL_NODOS[@]}"; do
+    FICHERO="${SQL_NODOS[$NODO]}"
+    if jq -e --arg n "$NODO" 'any(.nodes[]; .name == $n)' "$WF" >/dev/null &&
+       ! jq -e --arg n "$NODO" --rawfile sql "$FICHERO" \
+            '.nodes[] | select(.name == $n) | .parameters.query == $sql' \
+            "$WF" >/dev/null; then
+        echo "ERROR: la consulta del nodo \"$NODO\" no coincide con $FICHERO" >&2
+        exit 1
+    fi
+done
+
 # api MÉTODO RUTA [cuerpo] -> imprime el cuerpo de la respuesta; deja el
 # código HTTP en $HTTP_CODE
 RESP=$(mktemp)
