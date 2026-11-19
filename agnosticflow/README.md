@@ -9,7 +9,7 @@ guarda en un esquema relacional aislado por tenant.
 | Entregable | Contenido | Estado |
 |---|---|---|
 | E2 | Esquema relacional multi-tenant + quality checks SQL | ✅ |
-| E3 | Ingesta por webhook (autenticación, validación, 202/400, INSERT, logs) | En revisión |
+| E3 | Ingesta por webhook (autenticación, validación, 202/400, INSERT, logs) | En revisión (PR #4) |
 
 ## Estructura
 
@@ -82,6 +82,17 @@ desde `agnosticflow/`.
    ./n8n/scripts/desplegar_workflow.sh
    ```
 
+### Variables de entorno
+
+| Variable | Para qué sirve |
+|---|---|
+| `POSTGRES_DB` | Base de datos interna de n8n (`n8n`). La de negocio, `agnosticflow`, la crea la migración 000. |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` | Usuario de PostgreSQL, compartido por n8n y por la credencial de Postgres. |
+| `N8N_PORT` | Puerto local de n8n (por defecto `5678`). |
+| `N8N_ENCRYPTION_KEY` | Clave con la que n8n cifra las credenciales. Si cambia, n8n no puede descifrar las que ya existen. |
+| `N8N_API_KEY` | Clave de la API pública de n8n. La usa `desplegar_workflow.sh`. |
+| `INGESTA_WEBHOOK_TOKEN` | Valor que el cliente envía en la cabecera `X-AgnosticFlow-Token`. |
+
 ## Flujo de ingesta (E3)
 
 `POST /webhook/ingesta` con la cabecera `X-AgnosticFlow-Token`. El contrato
@@ -115,3 +126,12 @@ done
 # Webhook de extremo a extremo (P0–P4 de AGNOSTIC-16). Deja datos del tenant demo.
 ./n8n/scripts/probar_webhook.sh
 ```
+
+## Problemas frecuentes
+
+| Síntoma | Causa y solución |
+|---|---|
+| `404 The requested webhook "POST ingesta" is not registered` | La petición está llegando a otro n8n en el mismo puerto, o el workflow no está publicado. Revisa `N8N_PORT` y vuelve a lanzar `desplegar_workflow.sh`. |
+| `403 Authorization data is wrong!` | Falta la cabecera `X-AgnosticFlow-Token` o su valor no coincide con `INGESTA_WEBHOOK_TOKEN`. Si cambiaste el token, vuelve a lanzar `importar_credenciales.sh`. |
+| `ERROR: la consulta del nodo "Insertar ingesta" no coincide…` | Se editó `n8n/sql/insertar_ingesta.sql` o el nodo, pero no los dos. Copia el `.sql` en el campo `query` del nodo dentro del JSON del workflow. |
+| Una migración nueva no se aplica | Los scripts de `database/init/` solo se ejecutan con el volumen vacío. Aplícala a mano (el comando está en la cabecera de cada migración) o recrea el volumen con `docker compose down -v`, que **borra los datos**. |
